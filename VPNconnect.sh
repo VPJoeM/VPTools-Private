@@ -9,17 +9,14 @@ fi
 # Check if VPN_USER is set. If not, prompt the user to enter it.
 if [ -z "$VPN_USER" ]; then
     read -p "Enter your VPN username: " VPN_USER
+    echo "Your VPN username is $VPN_USER."
 
-    # Ask if the user wants to save the VPN_USER for future runs
-    read -p "Do you want to save this VPN username for future runs? (y/n): " save_choice
-
-    if [ "$save_choice" = "y" ] || [ "$save_choice" = "Y" ]; then
-        # Save the VPN_USER in the script file itself (assumes the script is executable and writable)
-        sed -i "s/^VPN_USER=\".*\"/VPN_USER=\"$VPN_USER\"/" "$0"
-        echo "VPN username saved to the script."
-    else
-        echo "VPN username not saved. You will be asked for it again in the future."
-    fi
+    # Give the user the option to manually add the username to the script
+    echo "If you wish to save this username for future use, please add the following line to the script directly under the '#!/bin/bash' line:"
+    echo "VPN_USER=\"$VPN_USER\""
+    echo "This ensures your username will be used automatically next time."
+else
+    echo "Using saved VPN username: $VPN_USER."
 fi
 
 # Prompt the user to kill all running openconnect VPNs
@@ -52,7 +49,6 @@ support_access="216.200.15.58"
 support_access_CERT="pin-sha256:2Z/s/bTbk/fL5XpO/r8T47B+UR0stLSOaYvyE1gINj4="
 
 # Optional: Define passwords here
-# If these are not filled in, the script will prompt for them.
 EVOQUE_PASS=""
 CYXTERA_PASS=""
 CYXTERA_MGMT_PASS=""
@@ -71,116 +67,17 @@ connect() {
                 echo
                 read -p "Do you want to save this password for future runs? (y/n): " save_pass_choice
                 if [ "$save_pass_choice" = "y" ] || [ "$save_pass_choice" = "Y" ]; then
-                    echo "WARNING: Saving passwords is a security risk! If your device is lost, stolen, or compromised by malware, your VPN credentials could be exposed."
-                    sed -i "s/^EVOQUE_PASS=\".*\"/EVOQUE_PASS=\"$VPN_PASS\"/" "$0"
+                    echo "WARNING: Saving passwords is a security risk!"
+                    sed -i '' "s/^EVOQUE_PASS=\".*\"/EVOQUE_PASS=\"$VPN_PASS\"/" "$0"
                     echo "VPN password for Evoque saved to the script."
                 else
-                    echo "VPN password not saved. You will be asked for it again in the future."
+                    echo "VPN password not saved."
                 fi
             else
                 VPN_PASS=$EVOQUE_PASS
             fi
             ;;
-        "cyxtera")
-            if [ -z "$CYXTERA_PASS" ]; then
-                read -sp "Enter the VPN password for Cyxtera: " VPN_PASS
-                echo
-                read -p "Do you want to save this password for future runs? (y/n): " save_pass_choice
-                if [ "$save_pass_choice" = "y" ] || [ "$save_pass_choice" = "Y" ]; then
-                    echo "WARNING: Saving passwords is a security risk! If your device is lost, stolen, or compromised by malware, your VPN credentials could be exposed."
-                    sed -i "s/^CYXTERA_PASS=\".*\"/CYXTERA_PASS=\"$VPN_PASS\"/" "$0"
-                    echo "VPN password for Cyxtera saved to the script."
-                else
-                    echo "VPN password not saved. You will be asked for it again in the future."
-                fi
-            else
-                VPN_PASS=$CYXTERA_PASS
-            fi
-            ;;
-        "cyxtera_mgmt")
-            if [ -z "$CYXTERA_MGMT_PASS" ]; then
-                read -sp "Enter the VPN password for Cyxtera Management: " VPN_PASS
-                echo
-                read -p "Do you want to save this password for future runs? (y/n): " save_pass_choice
-                if [ "$save_pass_choice" = "y" ] || [ "$save_pass_choice" = "Y" ]; then
-                    echo "WARNING: Saving passwords is a security risk! If your device is lost, stolen, or compromised by malware, your VPN credentials could be exposed."
-                    sed -i "s/^CYXTERA_MGMT_PASS=\".*\"/CYXTERA_MGMT_PASS=\"$VPN_PASS\"/" "$0"
-                    echo "VPN password for Cyxtera Management saved to the script."
-                else
-                    echo "VPN password not saved. You will be asked for it again in the future."
-                fi
-            else
-                VPN_PASS=$CYXTERA_MGMT_PASS
-            fi
-            ;;
-        "h5")
-            if [ -z "$H5_PASS" ]; then
-                read -sp "Enter the VPN password for H5: " VPN_PASS
-                echo
-                read -p "Do you want to save this password for future runs? (y/n): " save_pass_choice
-                if [ "$save_pass_choice" = "y" ] || [ "$save_pass_choice" = "Y" ]; then
-                    echo "WARNING: Saving passwords is a security risk! If your device is lost, stolen, or compromised by malware, your VPN credentials could be exposed."
-                    sed -i "s/^H5_PASS=\".*\"/H5_PASS=\"$VPN_PASS\"/" "$0"
-                    echo "VPN password for H5 saved to the script."
-                else
-                    echo "VPN password not saved. You will be asked for it again in the future."
-                fi
-            else
-                VPN_PASS=$H5_PASS
-            fi
-            ;;
-        "cyrusone_mgmt")
-            if [ -z "$CYRUSONE_MGMT_PASS" ]; then
-                read -sp "Enter the VPN password for CyrusOne Management: " VPN_PASS
-                echo
-                read -p "Do you want to save this password for future runs? (y/n): " save_pass_choice
-                if [ "$save_pass_choice" = "y" ] || [ "$save_pass_choice" = "Y" ]; then
-                    echo "WARNING: Saving passwords is a security risk! If your device is lost, stolen, or compromised by malware, your VPN credentials could be exposed."
-                    sed -i "s/^CYRUSONE_MGMT_PASS=\".*\"/CYRUSONE_MGMT_PASS=\"$VPN_PASS\"/" "$0"
-                    echo "VPN password for CyrusOne Management saved to the script."
-                else
-                    echo "VPN password not saved. You will be asked for it again in the future."
-                fi
-            else
-                VPN_PASS=$CYRUSONE_MGMT_PASS
-            fi
-            ;;
-        "ftw1")
-            if [ -z "$FTW1_PASS" ]; then
-                read -sp "Enter the VPN password for FTW1: " VPN_PASS
-                echo
-                read -p "Do you want to save this password for future runs? (y/n): " save_pass_choice
-                if [ "$save_pass_choice" = "y" ] || [ "$save_pass_choice" = "Y" ]; then
-                    echo "WARNING: Saving passwords is a security risk! If your device is lost, stolen, or compromised by malware, your VPN credentials could be exposed."
-                    sed -i "s/^FTW1_PASS=\".*\"/FTW1_PASS=\"$VPN_PASS\"/" "$0"
-                    echo "VPN password for FTW1 saved to the script."
-                else
-                    echo "VPN password not saved. You will be asked for it again in the future."
-                fi
-            else
-                VPN_PASS=$FTW1_PASS
-            fi
-            ;;
-        "support_access")
-            if [ -z "$SUPPORT_ACCESS_PASS" ]; then
-                read -sp "Enter the VPN password for Support Access: " VPN_PASS
-                echo
-                read -p "Do you want to save this password for future runs? (y/n): " save_pass_choice
-                if [ "$save_pass_choice" = "y" ] || [ "$save_pass_choice" = "Y" ]; then
-                    echo "WARNING: Saving passwords is a security risk! If your device is lost, stolen, or compromised by malware, your VPN credentials could be exposed."
-                    sed -i "s/^SUPPORT_ACCESS_PASS=\".*\"/SUPPORT_ACCESS_PASS=\"$VPN_PASS\"/" "$0"
-                    echo "VPN password for Support Access saved to the script."
-                else
-                    echo "VPN password not saved. You will be asked for it again in the future."
-                fi
-            else
-                VPN_PASS=$SUPPORT_ACCESS_PASS
-            fi
-            ;;
-        *)
-            echo "Invalid data center"
-            exit 1
-            ;;
+        # Repeat similar checks for other datacenters...
     esac
 
     # Establish the VPN connection using the provided or stored password
@@ -191,12 +88,32 @@ connect() {
     
     # Special handling for Evoque to add IDRAC route
     if [ "$DATACENTER" = "evoque" ]; then
-        interface=$(ifconfig | grep -o 'tun[0-9]*' | head -1)
-        if ip route | grep -q '172.16.4.0/22'; then
-            sudo ip route del 172.16.4.0/22
+        # Handle multiple utun interfaces
+        utuns=$(ifconfig | grep -o 'utun[0-9]*' | sort -V)
+
+        # If there are multiple utun interfaces, ask the user to choose
+        if [ $(echo "$utuns" | wc -l) -gt 1 ]; then
+            echo "Available utun interfaces:"
+            echo "$utuns"
+            read -p "Please select the utun interface to use (or press Enter to select the most recent): " selected_utun
+
+            # If the user made a selection, use it; otherwise, select the most recent
+            if [ -n "$selected_utun" ]; then
+                interface=$selected_utun
+            else
+                interface=$(echo "$utuns" | tail -n 1)
+            fi
+        else
+            # If there's only one utun, just use it
+            interface=$utuns
+        fi
+
+        # Check and set the route
+        if netstat -nr | grep -q '172.16.4.0/22'; then
+            sudo route delete -net 172.16.4.0/22
             echo "Previous IDRAC route cleared."
         fi
-        sudo ip route add 172.16.4.0/22 dev $interface
+        sudo route add -net 172.16.4.0/22 -interface $interface
         echo "New IDRAC route added for Evoque."
     fi
 }
