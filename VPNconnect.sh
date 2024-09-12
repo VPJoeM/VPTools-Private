@@ -6,6 +6,20 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+CONFIG_FILE="$HOME/.vpn_config"
+
+# Function to load passwords from the config file
+load_config() {
+    if [ -f "$CONFIG_FILE" ]; then
+        source "$CONFIG_FILE"
+    else
+        touch "$CONFIG_FILE"
+    fi
+}
+
+# Load any existing passwords
+load_config
+
 # Check if VPN_USER is set. If not, prompt the user to enter it.
 if [ -z "$VPN_USER" ]; then
     read -p "Enter your VPN username: " VPN_USER
@@ -59,33 +73,66 @@ SUPPORT_ACCESS_PASS=""
 
 # Function to connect to a data center
 connect() {
-    # Check if the password is already set, if not, prompt the user
+    # Dynamically set the password prompt based on the selected data center
     case $DATACENTER in
         "evoque")
-            if [ -z "$EVOQUE_PASS" ]; then
-                read -sp "Enter the VPN password for Evoque: " VPN_PASS
-                echo
-                read -p "Do you want to save this password for future runs? (y/n): " save_pass_choice
-                if [ "$save_pass_choice" = "y" ] || [ "$save_pass_choice" = "Y" ]; then
-                    echo "WARNING: Saving passwords is a security risk!"
-                    sed -i '' "s/^EVOQUE_PASS=\".*\"/EVOQUE_PASS=\"$VPN_PASS\"/" "$0"
-                    echo "VPN password for Evoque saved to the script."
-                else
-                    echo "VPN password not saved."
-                fi
-            else
-                VPN_PASS=$EVOQUE_PASS
-            fi
+            DC_NAME="Evoque"
+            DC_IP=$evoque
+            DC_CERT=$evoque_CERT
             ;;
-        # Repeat similar checks for other datacenters...
+        "cyxtera")
+            DC_NAME="Cyxtera"
+            DC_IP=$cyxtera
+            DC_CERT=$cyxtera_CERT
+            ;;
+        "cyxtera_mgmt")
+            DC_NAME="Cyxtera Management"
+            DC_IP=$cyxtera_MGMT
+            DC_CERT=$cyxtera_MGMT_CERT
+            ;;
+        "h5")
+            DC_NAME="H5"
+            DC_IP=$h5
+            DC_CERT=$h5_CERT
+            ;;
+        "cyrusone_mgmt")
+            DC_NAME="CyrusOne Management"
+            DC_IP=$cyrusone_MGMT
+            DC_CERT=$cyrusone_MGMT_CERT
+            ;;
+        "ftw1")
+            DC_NAME="FTW1"
+            DC_IP=$ftw1
+            DC_CERT=$ftw1_CERT
+            ;;
+        "support_access")
+            DC_NAME="Support Access"
+            DC_IP=$support_access
+            DC_CERT=$support_access_CERT
+            ;;
+        *)
+            echo "Invalid data center"
+            exit 1
+            ;;
     esac
 
+    # Check if the password is already set, if not, prompt the user for the selected data center
+    DATACENTER_PASS="${DATACENTER}_PASS"
+    if [ -z "${!DATACENTER_PASS}" ]; then
+        read -sp "Enter the VPN password for $DC_NAME: " VPN_PASS
+        echo
+        echo "If you wish to save this password for future use, add the following line to the script under the '# Optional: Define passwords here' section:"
+        echo "${DATACENTER}_PASS=\"$VPN_PASS\""
+    else
+        VPN_PASS=${!DATACENTER_PASS}
+    fi
+
     # Establish the VPN connection using the provided or stored password
-    echo "$VPN_PASS" | sudo openconnect --protocol=gp -u $VPN_USER $1 --servercert $2 --passwd-on-stdin &
+    echo "$VPN_PASS" | sudo openconnect --protocol=gp -u $VPN_USER $DC_IP --servercert $DC_CERT --passwd-on-stdin &
     
     # Wait for the VPN connection to establish
     sleep 5
-    
+
     # Special handling for Evoque to add IDRAC route
     if [ "$DATACENTER" = "evoque" ]; then
         # Handle multiple utun interfaces
@@ -138,42 +185,28 @@ echo "7) Support Access"
 # Get the user's choice
 read -p "Enter the number of your choice: " choice
 
-# Map the user's choice to a data center and connect
+# Map the user's choice to a data center
 case $choice in
     1)
         DATACENTER="h5"
-        DC_IP=$h5
-        DC_CERT=$h5_CERT
         ;;
     2)
         DATACENTER="evoque"
-        DC_IP=$evoque
-        DC_CERT=$evoque_CERT
         ;;
     3)
         DATACENTER="cyxtera"
-        DC_IP=$cyxtera
-        DC_CERT=$cyxtera_CERT
         ;;
     4)
         DATACENTER="cyxtera_mgmt"
-        DC_IP=$cyxtera_MGMT
-        DC_CERT=$cyxtera_MGMT_CERT
         ;;
     5)
         DATACENTER="cyrusone_mgmt"
-        DC_IP=$cyrusone_MGMT
-        DC_CERT=$cyrusone_MGMT_CERT
         ;;
     6)
         DATACENTER="ftw1"
-        DC_IP=$ftw1
-        DC_CERT=$ftw1_CERT
         ;;
     7)
         DATACENTER="support_access"
-        DC_IP=$support_access
-        DC_CERT=$support_access_CERT
         ;;
     *)
         echo "Invalid choice."
@@ -182,4 +215,4 @@ case $choice in
 esac
 
 # Call the connect function with the chosen data center details
-connect $DC_IP $DC_CERT
+connect
