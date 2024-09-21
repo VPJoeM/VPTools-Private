@@ -6,6 +6,7 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+SCRIPT_PATH=$(realpath "$0")
 CONFIG_FILE="$HOME/.vpn_config"
 
 # Function to load passwords from the config file
@@ -17,18 +18,34 @@ load_config() {
     fi
 }
 
+# Function to save username and passwords in the script
+save_to_script() {
+    local var_name="$1"
+    local var_value="$2"
+    local script="$SCRIPT_PATH"
+    
+    # If the variable already exists, replace its value, otherwise append it
+    if grep -q "^$var_name=" "$script"; then
+        sed -i "s|^$var_name=.*|$var_name=\"$var_value\"|" "$script"
+    else
+        echo "$var_name=\"$var_value\"" >> "$script"
+    fi
+}
+
 # Load any existing passwords
 load_config
 
-# Check if VPN_USER is set. If not, prompt the user to enter it.
+# Check if VPN_USER is set. If not, prompt the user to enter it and offer to save it.
 if [ -z "$VPN_USER" ]; then
     read -p "Enter your VPN username: " VPN_USER
     echo "Your VPN username is $VPN_USER."
 
-    # Give the user the option to manually add the username to the script
-    echo "If you wish to save this username for future use, please add the following line to the script directly under the '#!/bin/bash' line:"
-    echo "VPN_USER=\"$VPN_USER\""
-    echo "This ensures your username will be used automatically next time."
+    # Ask if the user wants to save the username
+    read -p "Do you want to save your VPN username for future use? (y/n): " save_user
+    if [ "$save_user" = "y" ] || [ "$save_user" = "Y" ]; then
+        echo "Saving your VPN username..."
+        save_to_script "VPN_USER" "$VPN_USER"
+    fi
 else
     echo "Using saved VPN username: $VPN_USER."
 fi
@@ -121,46 +138,49 @@ connect() {
     if [ -z "${!DATACENTER_PASS}" ]; then
         read -sp "Enter the VPN password for $DC_NAME: " VPN_PASS
         echo
-        echo "If you wish to save this password for future use, add the following line to the script under the '# Optional: Define passwords here' section:"
-        echo "${DATACENTER}_PASS=\"$VPN_PASS\""
+
+        # Ask if the user wants to save the password
+        read -p "Do you want to save your VPN password for $DC_NAME for future use? (y/n): " save_pass
+        if [ "$save_pass" = "y" ] || [ "$save_pass" = "Y" ]; then
+            echo "Saving your VPN password for $DC_NAME..."
+            save_to_script "${DATACENTER}_PASS" "$VPN_PASS"
+        fi
     else
         VPN_PASS=${!DATACENTER_PASS}
     fi
 
     # Establish the VPN connection using the provided or stored password
     echo "$VPN_PASS" | sudo openconnect --protocol=gp -u $VPN_USER $DC_IP --servercert $DC_CERT --passwd-on-stdin &
-    
+
     # Wait for the VPN connection to establish
     sleep 5
 
     # Special handling for Evoque to add IDRAC route
     if [ "$DATACENTER" = "evoque" ]; then
-        # Handle multiple utun interfaces
-        utuns=$(ifconfig | grep -o 'utun[0-9]*' | sort -V)
-
-        # If there are multiple utun interfaces, ask the user to choose
-        if [ $(echo "$utuns" | wc -l) -gt 1 ]; then
-            echo "Available utun interfaces:"
-            echo "$utuns"
-            read -p "Please select the utun interface to use (or press Enter to select the most recent): " selected_utun
-
-            # If the user made a selection, use it; otherwise, select the most recent
-            if [ -n "$selected_utun" ]; then
-                interface=$selected_utun
+        # Wait for the VPN interface (utun or tunX) to be available
+        for i in {1..10}; do
+            # Check if any tun or utun interface is available
+            interface=$(ip addr show | grep -o 'utun[0-9]*\|tun[0-9]*' | sort -V | tail -n 1)
+            if [ -n "$interface" ]; then
+                echo "Found VPN interface: $interface"
+                break
             else
-                interface=$(echo "$utuns" | tail -n 1)
+                echo "Waiting for VPN interface..."
+                sleep 1
             fi
-        else
-            # If there's only one utun, just use it
-            interface=$utuns
+        done
+
+        if [ -z "$interface" ]; then
+            echo "VPN interface not found. Cannot add IDRAC route."
+            exit 1
         fi
 
-        # Check and set the route
-        if netstat -nr | grep -q '172.16.4.0/22'; then
-            sudo route delete -net 172.16.4.0/22
+        # Check and set the route using ip command
+        if ip route | grep -q '172.16.4.0/22'; then
+            sudo ip route del 172.16.4.0/22
             echo "Previous IDRAC route cleared."
         fi
-        sudo route add -net 172.16.4.0/22 -interface $interface
+        sudo ip route add 172.16.4.0/22 dev "$interface"
         echo "New IDRAC route added for Evoque."
     fi
 }
