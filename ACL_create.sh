@@ -6,7 +6,6 @@ get_input() {
     echo "$response"
 }
 
-# Step 1: Get the API token
 if [ -f "./saved_token.txt" ]; then
     read -p "Do you want to use the saved token? (yes/no): " use_saved_token
     if [ "$use_saved_token" = "yes" ]; then
@@ -26,19 +25,15 @@ else
     fi
 fi
 
-# Step 2: Get customer information
 CUSTOMER_NAME=$(get_input "Enter customer name")
 ORDER_ID=$(get_input "Enter order ID (usually same as customer name)")
 
-# Step 3: Create firewall rules
 RULES=()
 
-# Ask if the user wants to add multiple IPs
 while true; do
     NEW_PRIVATE_IP=$(get_input "Enter new node private IP")
     NEW_PUBLIC_IP=$(get_input "Enter new node public IP")
 
-    # Create rule for adding new node
     RULES+=("{
         \"private_ip\": \"$NEW_PRIVATE_IP\",
         \"public_ip\": \"$NEW_PUBLIC_IP\",
@@ -55,14 +50,12 @@ while true; do
     fi
 done
 
-# Step 4: Format the rule data for curl
 RULE_DATA="["
 for RULE in "${RULES[@]}"; do
     RULE_DATA+="$RULE,"
 done
 RULE_DATA="${RULE_DATA%,}]"
 
-# Step 5: Execute the curl command
 curl -k -X POST https://10.15.231.200/vpa \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
