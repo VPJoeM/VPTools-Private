@@ -54,55 +54,104 @@ validate_ip() {
     fi
 }
 
-# Ask for the number of nodes
-while true; do
-    read -p "How many GPU nodes are you using? " node_count
-    if [[ "$node_count" =~ ^[0-9]+$ ]] && [ "$node_count" -gt 0 ]; then
-        break
-    else
-        echo "Please enter a valid number greater than 0."
+# Create a temporary inventory file
+temp_inventory=$(mktemp)
+echo "[gpu_nodes]" > "$temp_inventory"
+
+echo "Please paste your node information below. Press Ctrl+D when finished:"
+node_id=""
+private_ip=""
+public_ip=""
+
+while IFS= read -r line; do
+    if [[ -z "$line" ]]; then
+        if [[ -n "$node_id" && -n "$ip" ]]; then
+            echo "$node_id ansible_host=$ip" >> "$temp_inventory"
+            node_id=""
+            private_ip=""
+            public_ip=""
+        fi
+        continue
+    fi
+    
+    if [[ -z "$node_id" ]]; then
+        node_id="$line"
+    elif [[ "$line" =~ ^10\. ]]; then
+        private_ip="$line"
+    elif [[ "$line" =~ ^147\. ]]; then
+        public_ip="$line"
+        if [[ "$ip_type" == "public" ]]; then
+            ip="$public_ip"
+        else
+            ip="$private_ip"
+        fi
     fi
 done
 
-# Create a temporary inventory file
-temp_inventory=$(mktemp)
-cat << EOF > "$temp_inventory"
-all:
-  children:
-    gpu_nodes:
-      hosts:
-EOF
+# Add the last node if there's any remaining
+if [[ -n "$node_id" && -n "$ip" ]]; then
+    echo "$node_id ansible_host=$ip" >> "$temp_inventory"
+fi
 
-# Prompt for IP addresses
-for ((i=1; i<=node_count; i++)); do
-    while true; do
-        read -p "Enter a name for GPU node $i: " node_name
-        read -p "Enter the $ip_type IP address for $node_name: " ip
-        if validate_ip "$ip"; then
-            echo "        $node_name:" >> "$temp_inventory"
-            echo "          ansible_host: $ip" >> "$temp_inventory"
-            break
-        else
-            echo "Invalid IP address. Please try again."
-        fi
-    done
-done
-
-# Add the remaining inventory content
-cat << EOF >> "$temp_inventory"
-      vars:
-        ansible_user: ubuntu
-        ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
-
-  vars:
-    ansible_ssh_private_key_file: "{{ lookup('env', 'SSH_AUTH_SOCK') }}"
-EOF
+# Add variables for all hosts
+echo "" >> "$temp_inventory"
+echo "[gpu_nodes:vars]" >> "$temp_inventory"
+echo "ansible_user=ubuntu" >> "$temp_inventory"
+echo "ansible_ssh_common_args='-o StrictHostKeyChecking=no'" >> "$temp_inventory"
+echo "ansible_ssh_private_key_file=\"{{ lookup('env', 'SSH_AUTH_SOCK') }}\"" >> "$temp_inventory"
 
 echo "Inventory file created successfully."
 
+# Function to prompt for directory path
+prompt_for_directory() {
+    local dir_path
+    while true; do
+        read -p "Enter the path to the directory containing Ansible playbooks: " dir_path
+        
+        # Expand the path (resolve ~)
+        dir_path=$(eval echo "$dir_path")
+        
+        if [ -d "$dir_path" ]; then
+            echo "$dir_path"
+            return 0
+        else
+            echo "Directory not found: $dir_path"
+            echo "Current working directory: $(pwd)"
+            echo "Please enter a valid path."
+        fi
+    done
+}
+
+# Prompt for the playbook directory
+playbook_dir=$(prompt_for_directory)
+
+# List YAML files in the directory and let user choose
+yaml_files=($(find "$playbook_dir" -maxdepth 1 -name "*.yml" -o -name "*.yaml"))
+if [ ${#yaml_files[@]} -eq 0 ]; then
+    echo "No YAML files found in the specified directory: $playbook_dir"
+    echo "Files in the directory:"
+    ls -la "$playbook_dir"
+    exit 1
+fi
+
+echo "Available playbooks:"
+for i in "${!yaml_files[@]}"; do
+    echo "$((i+1)). $(basename "${yaml_files[$i]}")"
+done
+
+while true; do
+    read -p "Enter the number of the playbook you want to run: " choice
+    if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#yaml_files[@]}" ]; then
+        playbook_path="${yaml_files[$((choice-1))]}"
+        break
+    else
+        echo "Invalid choice. Please enter a number between 1 and ${#yaml_files[@]}."
+    fi
+done
+
 # Run the Ansible playbook
-echo "Running Ansible playbook..."
-ansible-playbook -i "$temp_inventory" mix_ofed_lts_play.yml
+echo "Running Ansible playbook: $(basename "$playbook_path")..."
+ansible-playbook -i "$temp_inventory" "$playbook_path"
 
 # Clean up
 rm "$temp_inventory"
