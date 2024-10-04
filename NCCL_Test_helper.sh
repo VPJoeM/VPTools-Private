@@ -102,6 +102,11 @@ echo "ansible_ssh_private_key_file=\"{{ lookup('env', 'SSH_AUTH_SOCK') }}\"" >> 
 
 echo "Inventory file created successfully."
 
+# Function to find YAML files in a directory
+find_yaml_files() {
+    find "$1" -maxdepth 1 -name "*.yml" -o -name "*.yaml"
+}
+
 # Function to prompt for directory path
 prompt_for_directory() {
     local dir_path
@@ -122,16 +127,23 @@ prompt_for_directory() {
     done
 }
 
-# Prompt for the playbook directory
-playbook_dir=$(prompt_for_directory)
+# Check current directory for playbooks
+current_dir=$(pwd)
+yaml_files=($(find_yaml_files "$current_dir"))
 
-# List YAML files in the directory and let user choose
-yaml_files=($(find "$playbook_dir" -maxdepth 1 -name "*.yml" -o -name "*.yaml"))
+# If no playbooks found in current directory, prompt for a different path
 if [ ${#yaml_files[@]} -eq 0 ]; then
-    echo "No YAML files found in the specified directory: $playbook_dir"
-    echo "Files in the directory:"
-    ls -la "$playbook_dir"
-    exit 1
+    echo "No YAML files found in the current directory."
+    while [ ${#yaml_files[@]} -eq 0 ]; do
+        playbook_dir=$(prompt_for_directory)
+        yaml_files=($(find_yaml_files "$playbook_dir"))
+        if [ ${#yaml_files[@]} -eq 0 ]; then
+            echo "No YAML files found in the specified directory: $playbook_dir"
+            echo "Please try again."
+        fi
+    done
+else
+    playbook_dir="$current_dir"
 fi
 
 echo "Available playbooks:"
