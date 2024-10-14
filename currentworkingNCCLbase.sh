@@ -2,34 +2,70 @@
 
 set -x  # Enable debugging
 
-# Function to select SSH key
 select_ssh_key() {
     local ssh_dir="$HOME/.ssh"
-    local keys=($(find "$ssh_dir" -type f -name "id_*" ! -name "*.pub"))
+    local key_types=("id_rsa" "id_dsa" "id_ecdsa" "id_ed25519")
+    local found_keys=()
 
-    if [ ${#keys[@]} -eq 0 ]; then
+    echo "Searching for SSH keys in $ssh_dir"
+
+    # Search for keys in the default location
+    for type in "${key_types[@]}"; do
+        if [ -f "$ssh_dir/$type" ]; then
+            echo "Found key: $ssh_dir/$type"
+            found_keys+=("$ssh_dir/$type")
+        fi
+    done
+
+    # Search for additional keys with common SSH key file extensions
+    while IFS= read -r -d '' file; do
+        if [[ "$file" =~ \.(pem|key)$ ]] && [[ ! " ${found_keys[@]} " =~ " ${file} " ]]; then
+            echo "Found additional key: $file"
+            found_keys+=("$file")
+        fi
+    done < <(find "$ssh_dir" -type f ! -name "*.pub" ! -name "known_hosts*" ! -name "authorized_keys" ! -name "config" -print0)
+
+    # Display found keys
+    if [ ${#found_keys[@]} -eq 0 ]; then
         echo "No SSH keys found in $ssh_dir"
-        exit 1
-    elif [ ${#keys[@]} -eq 1 ]; then
-        echo "Using the only available SSH key: ${keys[0]}"
-        SSH_KEY="${keys[0]}"
     else
-        echo "Multiple SSH keys found. Please select one:"
-        select key in "${keys[@]}"; do
-            if [ -n "$key" ]; then
-                SSH_KEY="$key"
-                break
-            else
-                echo "Invalid selection. Please try again."
-            fi
+        echo "Found SSH keys:"
+        for i in "${!found_keys[@]}"; do
+            echo "$((i+1)). ${found_keys[$i]}"
         done
+    fi
+
+    echo "Debug: Number of keys found: ${#found_keys[@]}"
+
+    # Allow user to select a key or enter a custom path
+    while true; do
+        read -p "Select a key number, or enter a custom path (or 'q' to quit): " selection
+        if [[ "$selection" == "q" ]]; then
+            echo "Exiting script."
+            exit 0
+        elif [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "${#found_keys[@]}" ]; then
+            SSH_KEY="${found_keys[$((selection-1))]}"
+            break
+        elif [ -f "$selection" ]; then
+            SSH_KEY="$selection"
+            break
+        else
+            echo "Invalid selection or file not found. Please try again."
+        fi
+    done
+
+    # Verify the selected key
+    if [ -r "$SSH_KEY" ]; then
+        echo "Selected SSH key: $SSH_KEY"
+    else
+        echo "Error: Unable to read the SSH key at $SSH_KEY"
+        exit 1
     fi
 }
 
-# Call the function to select SSH key
+# Call the function
 select_ssh_key
 
-# Array to store hostnames
 declare -a hostnames
 
 function check_server {
@@ -64,36 +100,63 @@ function check_server {
     fi
 }
 
-# Create a temporary inventory file
 temp_inventory=$(mktemp)
 echo "[gpu_nodes]" > "$temp_inventory"
 
-# Ask for SSH user
-read -p "Enter the SSH user for the remote servers: " ssh_user
+# Set default username
+ssh_user="ubuntu"
+
+# Ask if user wants to use a custom username
+read -p "Do you want to use a custom username? (default is 'ubuntu') [y/N]: " use_custom_user
+if [[ $use_custom_user =~ ^[Yy]$ ]]; then
+    read -p "Enter custom username: " custom_user
+    ssh_user="$custom_user"
+fi
+
+echo "Using SSH user: $ssh_user"
 
 echo "Please paste the IP addresses (one per line)."
 echo "Press Ctrl+D when finished:"
 
-# Read input into an array
-mapfile -t input_lines
+# Read input and filter for valid IP addresses
+mapfile -t input_lines < <(grep -oE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b')
 
 echo "Finished processing input."
 echo ""
 
-# Process the collected lines
-for line in "${input_lines[@]}"; do
-    if [[ -n "$line" ]]; then
-        echo "Processing line: $line"
-        if [[ $line =~ ^147\. ]]; then
-            public_ip=$line
-            check_server "$public_ip" "$ssh_user"
+valid_ips=()
+for ip in "${input_lines[@]}"; do
+    if [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        IFS='.' read -r -a octets <<< "$ip"
+        valid=true
+        for octet in "${octets[@]}"; do
+            if (( octet < 0 || octet > 255 )); then
+                valid=false
+                break
+            fi
+        done
+        if $valid; then
+            valid_ips+=("$ip")
+            echo "Valid IP found: $ip"
         else
-            echo "Skipping invalid IP: $line"
+            echo "Skipping invalid IP: $ip"
         fi
+    else
+        echo "Skipping invalid input: $ip"
     fi
 done
 
-# After processing all IPs
+if [ ${#valid_ips[@]} -eq 0 ]; then
+    echo "Error: No valid IP addresses found. Please check your input and try again."
+    exit 1
+fi
+
+echo "Processing ${#valid_ips[@]} valid IP addresses."
+
+for public_ip in "${valid_ips[@]}"; do
+    check_server "$public_ip" "$ssh_user"
+done
+
 if [ ${#hostnames[@]} -eq 0 ]; then
     echo "Error: No valid hosts found. Please check your SSH key, user, and firewall settings."
     exit 1
@@ -113,36 +176,25 @@ echo "Debug: Collected hostnames: ${hostnames[*]}"
 
 set +x  # Disable debugging
 
-# Function to find YAML files in a directory
 find_yaml_files() {
     find "$1" -maxdepth 1 -name "*.yml" -o -name "*.yaml"
 }
 
-# Check for playbooks in voltagepark-collab/nccl_testing
 current_dir=$(pwd)
 playbook_dir="$current_dir/voltagepark-collab/nccl_testing"
 
 if [ ! -d "$playbook_dir" ]; then
-    echo "Directory $playbook_dir not found."
-    read -p "Enter the path to the directory containing the playbooks: " custom_path
-    if [ -d "$custom_path" ]; then
-        playbook_dir="$custom_path"
-    else
-        echo "Invalid directory. Using current directory."
-        playbook_dir="$current_dir"
-    fi
+    echo "Playbook directory not found. Using current directory."
+    playbook_dir="$current_dir"
 fi
 
 yaml_files=($(find_yaml_files "$playbook_dir"))
 
 if [ ${#yaml_files[@]} -eq 0 ]; then
-    echo "No YAML files found in $playbook_dir."
-    echo "Using current directory as a fallback."
-    playbook_dir="$current_dir"
-    yaml_files=($(find_yaml_files "$playbook_dir"))
+    echo "No YAML files found in $playbook_dir"
+    exit 1
 fi
 
-# Available playbooks
 echo "Available playbooks:"
 echo "NOTE: You most likely want to choose the option for mlx_ofed_lts_play.yml"
 echo "--------------------------------------------------------------------"
@@ -150,68 +202,108 @@ for i in "${!yaml_files[@]}"; do
     echo "$((i+1)). $(basename "${yaml_files[$i]}")"
 done
 
-# Select playbook
-read -p "Enter the number of the playbook you want to run: " playbook_choice
-selected_playbook="${yaml_files[$((playbook_choice-1))]}"
+while true; do
+    read -p "Enter the number of the playbook you want to run: " selection
+    if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "${#yaml_files[@]}" ]; then
+        selected_playbook="${yaml_files[$((selection-1))]}"
+        break
+    else
+        echo "Invalid selection. Please enter a number between 1 and ${#yaml_files[@]}."
+    fi
+done
 
-if [ ! -f "$selected_playbook" ]; then
-    echo "Invalid selection. Exiting."
+echo "You selected: $selected_playbook"
+echo "Selected playbook: $selected_playbook"
+echo "Using inventory file: $temp_inventory"
+
+echo "Running Ansible playbook..."
+
+# Run the Ansible playbook and save the raw output to a variable
+NCCL_TEST_RESULTS=$(ansible-playbook -i "$temp_inventory" "$selected_playbook")
+
+# Check if the ansible-playbook command executed successfully
+if [ $? -ne 0 ]; then
+    echo "Error: Ansible playbook execution failed."
     exit 1
 fi
 
-echo "Selected playbook: $selected_playbook"
-
-# Ask if user wants to start at a specific task
-read -p "Do you want to start at a specific task? (y/n): " start_at_task_choice
-
-if [[ $start_at_task_choice =~ ^[Yy]$ ]]; then
-    read -p "Enter the task name to start at: " start_at_task
-fi
-
-# Ask for the number of forks
-echo "Choose the number of Ansible forks (default is 20):"
-read -r -p "Enter the number of forks (5-30, default 20): " forks
-forks=${forks:-20}
-
-# Validate forks input
-if ! [[ "$forks" =~ ^[0-9]+$ ]] || [ "$forks" -lt 5 ] || [ "$forks" -gt 30 ]; then
-    echo "Invalid input. Using default value of 20 forks."
-    forks=20
-fi
-
-echo "Running Ansible playbook: $selected_playbook"
-
-# Use tee to display output in real-time and capture it
-playbook_output_file=$(mktemp)
-ansible-playbook -i "$temp_inventory" "$selected_playbook" ${start_at_task:+--start-at-task "$start_at_task"} -f "$forks" -vv | tee "$playbook_output_file"
-playbook_exit_code=${PIPESTATUS[0]}
-
-echo "Playbook execution completed with exit code: $playbook_exit_code"
-
-if [ $playbook_exit_code -ne 0 ]; then
-    echo "Error: Ansible playbook execution failed with exit code $playbook_exit_code."
-    exit $playbook_exit_code
-fi
-
-# Function to parse and display NCCL test results
-function parse_nccl_results {
-    echo "NCCL Test Results Summary:"
-    echo "=========================="
-    
-    if [ -f "$playbook_output_file" ]; then
-        # Extract the results for each test
-        grep -A 20 "Results for" "$playbook_output_file" | sed 's/^ok: \[g[0-9]*\] => {//' | sed 's/^    "msg": "//' | sed 's/"$//' | sed 's/\\n/\n/g' | sed 's/\\t/\t/g'
-    else
-        echo "No playbook output file found."
-    fi
-}
-
-# Call the function to parse and display results
-parse_nccl_results
-
-# Clean up
+# Clean up temporary files
 rm "$temp_inventory"
-rm "$playbook_output_file"
-echo "Temporary files removed."
 
-echo "Script completed successfully."
+echo "Temporary files removed."
+echo "Parsing results..."
+
+# Embedded Python script to parse the results
+python3 << END
+import re
+import sys
+
+def parse_nccl_output(content):
+    tests = re.findall(r'# nThread.*?# Out of bounds.*?# Avg bus bandwidth.*?#', content, re.DOTALL)
+
+    for test in tests:
+        test_name = re.search(r'/build/(\w+)', test)
+        if test_name:
+            print(f"\nResults for {test_name.group(1)}:")
+            print("=" * 40)
+
+        headers = re.search(r'#\s+size.*?#', test, re.DOTALL)
+        if headers:
+            print(headers.group().strip())
+
+        results = re.findall(r'^\s*\d.*', test, re.MULTILINE)
+        for result in results:
+            print(result.strip())
+
+        out_of_bounds = re.search(r'# Out of bounds.*', test)
+        if out_of_bounds:
+            print(out_of_bounds.group().strip())
+
+        avg_bandwidth = re.search(r'# Avg bus bandwidth.*', test)
+        if avg_bandwidth:
+            print(avg_bandwidth.group().strip())
+
+# Read the NCCL_TEST_RESULTS from the environment variable
+nccl_output = '''$NCCL_TEST_RESULTS'''
+parse_nccl_output(nccl_output)
+END
+
+echo "Script completed."
+
+# Function to parse and display results
+parse_results() {
+    echo "Parsing results..."
+    
+    # Get the hostname
+    local hostname=$(hostname)
+    
+    echo "SINGLE NODE TESTS (Node: $hostname)"
+    echo "-------------------------------------"
+    
+    echo "1. Single Node All-Reduce Test"
+    echo "Description: Measures the performance of the all-reduce operation on a single node."
+    echo "$NCCL_TEST_RESULTS" | sed -n '/^#.*size.*time.*algbw.*busbw/,/^# Out of bounds values : 0 OK$/p' | head -n 13
+    
+    echo "2. Single Node All-Gather Test"
+    echo "Description: Evaluates the all-gather operation performance within a single node."
+    echo "$NCCL_TEST_RESULTS" | sed -n '0,/^# Out of bounds values : 0 OK$/p' | tail -n 13 | head -n 13
+    
+    echo "3. Single Node Reduce-Scatter Test"
+    echo "Description: Tests the reduce-scatter operation efficiency on a single node."
+    echo "$NCCL_TEST_RESULTS" | sed -n '0,/^# Out of bounds values : 0 OK$/p' | tail -n 13 | head -n 13
+    
+    echo "CLUSTER WIDE TESTS"
+    echo "------------------"
+    
+    echo "4. Multi-Node All-Reduce Test"
+    echo "Description: Assesses the all-reduce operation across multiple nodes in the cluster."
+    echo "$NCCL_TEST_RESULTS" | sed -n '0,/^# Out of bounds values : 0 OK$/p' | tail -n 13 | head -n 13
+    
+    echo "5. Multi-Node All-Gather Test"
+    echo "Description: Measures the all-gather operation performance across the entire cluster."
+    echo "$NCCL_TEST_RESULTS" | sed -n '0,/^# Out of bounds values : 0 OK$/p' | tail -n 13 | head -n 13
+    
+    echo "6. Multi-Node Reduce-Scatter Test"
+    echo "Description: Evaluates the reduce-scatter operation efficiency across multiple nodes."
+    echo "$NCCL_TEST_RESULTS" | sed -n '0,/^# Out of bounds values : 0 OK$/p' | tail -n 13 | head -n 13
+}
